@@ -5,6 +5,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
+local tw 
 
 local function caycaycay(TweenBig, ShowStrong, TweenShrinking, MaxStrength, MaxRoughness)
 	MaxStrength = MaxStrength or 7.5
@@ -81,10 +82,10 @@ light(2, Color3.fromRGB(127, 249, 255), Color3.fromRGB(0, 45, 185))
 
 
 local entity = {
-	EntityModel = "https://github.com/eoyoustme/Hardcore/blob/main/Cease.rbxm?raw=true", 
+	EntityModel = "https://github.com/eoyoustme/Pressure-SKid-Gay-/blob/main/Cease.rbxm?raw=true", 
 	Speed = 40,
 	HeightOfOffset = 3,
-	Delay = 3,
+	Delay = 5,
 	Hitbox = 50,
 	PandemoniumMove = false,
 
@@ -187,6 +188,68 @@ local function getPlayerRoomIdx(sortedRooms, hrp)
 	end
 
 	return closestIdx
+end
+
+local wasInPlayerRoom = false
+local windTween = nil
+
+local function calculateEntitySpeed(baseSpeed, entityRoomIdx, sortedRooms, hrp, entityModel)
+	if not hrp or not entityModel then
+		return baseSpeed * 4
+	end
+
+	local playerRoomIdx = getPlayerRoomIdx(sortedRooms, hrp)
+	local isInPlayerRoom = (entityRoomIdx == playerRoomIdx)
+
+	local hsur = entityModel:FindFirstChild("HSUR")
+	local blueSound = hsur and hsur:FindFirstChild("WindStatic")
+	local stoppingSound = entityModel:FindFirstChild("CeaseStopping")
+
+	if isInPlayerRoom and not wasInPlayerRoom then
+		wasInPlayerRoom = true
+
+		if windTween then
+			windTween:Cancel()
+			windTween = nil
+		end
+
+		if blueSound then
+			blueSound:Stop()
+		end
+
+		if stoppingSound then
+			stoppingSound:Play()
+		end
+
+	elseif not isInPlayerRoom and wasInPlayerRoom then
+		wasInPlayerRoom = false
+
+		if stoppingSound then
+			stoppingSound:Stop()
+		end
+
+		if blueSound then
+			if windTween then
+				windTween:Cancel()
+			end
+
+			blueSound.PlaybackSpeed = 1
+			blueSound:Play()
+
+			local tweenInfo = TweenInfo.new(5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+			windTween = TweenService:Create(blueSound, tweenInfo, {
+				PlaybackSpeed = 0.1
+			})
+			windTween:Play()
+		end
+	end
+
+	-- Trả về tốc độ tương ứng
+	if isInPlayerRoom then
+		return baseSpeed
+	else
+		return baseSpeed * 4
+	end
 end
 
 local function isPlayerInLocker()
@@ -705,7 +768,35 @@ local function spawnEntity()
 	end
 
 	entityModel.Parent = workspace
+	local function GetGitSound(GithubSnd, SoundName)
+		local url = GithubSnd
+		if not isfile(SoundName .. ".mp3") then
+			writefile(SoundName .. ".mp3", game:HttpGet(url))
+		end
+		local sound = Instance.new("Sound")
+		sound.SoundId = (getcustomasset or getsynasset)(SoundName .. ".mp3")
+		return sound
+	end
+
+	local blueSound = entityModel.HSUR.WindStatic
+
+	local gitSoundTemp = GetGitSound("https://github.com/eoyoustme/Pressure-Skid-Gay-/blob/main/cease%20wind.mp3?raw=true", "1111111111111")
+
+	blueSound.SoundId = gitSoundTemp.SoundId
+
+	gitSoundTemp:Destroy()
+
 	task.wait(entity.Delay)
+	local TweenService = game:GetService("TweenService")
+
+	local tweenInfo = TweenInfo.new(10, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+	 tw = TweenService:Create(blueSound, tweenInfo, {
+		PlaybackSpeed = 2
+	})
+
+	tw:Play()
+	blueSound:Play()
 	startCameraShake(mainPart, entity.CameraShaker)
 
 	local effectiveHitbox = (entity.PandemoniumMove or entity.PipSqueakMove) and (entity.Hitbox / 10) or entity.Hitbox
@@ -749,19 +840,7 @@ local function spawnEntity()
 					local hrp = character and character:FindFirstChild("HumanoidRootPart")
 					local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 
-					-- [SỬA] Tính toán tốc độ dựa trên phòng của Player
-					local currentSpeed = entity.Speed * 4 -- Mặc định là x4 nếu không tìm thấy người chơi
-
-					if hrp then
-						local playerRoomIdx = getPlayerRoomIdx(sortedRooms, hrp)
-						if roomIdx == playerRoomIdx then
-							currentSpeed = entity.Speed -- Trở về tốc độ bình thường nếu Entity đang đứng ở phòng Player đang đứng
-						else
-							currentSpeed = entity.Speed * 4 -- x4 nếu chưa tới phòng Player hoặc khi Player sang phòng khác
-						end
-					end
-
-					-- Di chuyển với currentSpeed mới
+					local currentSpeed = calculateEntitySpeed(entity.Speed, roomIdx, sortedRooms, hrp, entityModel)
 					local moveStep = direction * currentSpeed * dt
 
 					if (targetPos - mainPart.Position).Magnitude < moveStep.Magnitude then
@@ -948,6 +1027,12 @@ local function spawnEntity()
 	end
 
 	if entityModel and entityModel.Parent then
+		TweenService:Create(
+			entityModel.HSUR,
+			TweenInfo.new(2, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+			{CFrame = entityModel.HSUR.CFrame * CFrame.new(0, -100, 0)}
+		):Play()
+		wait(5)
 		entityModel:Destroy()
 	end
 end

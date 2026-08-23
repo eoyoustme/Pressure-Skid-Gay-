@@ -1,0 +1,180 @@
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local TweenService = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local hrp = character:WaitForChild("HumanoidRootPart")
+
+local function spawnShocker()
+	local shockerModel = game:GetObjects("rbxassetid://90250291645240")[1]
+	local camera = Workspace.CurrentCamera
+
+	local rootPart = shockerModel:FindFirstChild("HumanoidRootPart") or shockerModel:FindFirstChildWhichIsA("BasePart")
+	shockerModel.PrimaryPart = rootPart
+	shockerModel.Parent = Workspace
+
+	local oogaBoogaaPart = shockerModel:WaitForChild("Base")
+	local horrorScream = oogaBoogaaPart:WaitForChild("HORROR SCREAM 15")
+	local sb = oogaBoogaaPart:WaitForChild("PlaySound")
+	local sb2 = oogaBoogaaPart:WaitForChild("Repent")
+
+	sb.Volume = 1.5
+	sb:Play()
+	sb2:Play()
+
+	local speed = 32
+	local startTime = tick()
+	local followConnection
+
+	local initialY = hrp.Position.Y
+
+	local initialCamLook = Vector3.new(camera.CFrame.LookVector.X, 0, camera.CFrame.LookVector.Z).Unit
+	local startSpawnPos = camera.CFrame.Position + (initialCamLook * 20)
+	shockerModel:PivotTo(CFrame.new(Vector3.new(startSpawnPos.X, initialY, startSpawnPos.Z)))
+
+	followConnection = RunService.RenderStepped:Connect(function(dt)
+		if tick() - startTime < 2 then
+			local camCFrame = camera.CFrame
+			local camPos = camCFrame.Position
+
+			local flatLook = Vector3.new(camCFrame.LookVector.X, 0, camCFrame.LookVector.Z).Unit
+			local targetPos = camPos + (flatLook * 20)
+			targetPos = Vector3.new(targetPos.X, initialY, targetPos.Z)
+
+			local currentPos = rootPart.Position
+			local moveVector = targetPos - currentPos
+			local distance = moveVector.Magnitude
+
+			if distance > 0.05 then
+				local moveStep = math.min(distance, speed * dt)
+				local newPos = currentPos + (moveVector.Unit * moveStep)
+				shockerModel:PivotTo(CFrame.lookAt(newPos, Vector3.new(camPos.X, newPos.Y, camPos.Z)))
+			end
+		else
+			if followConnection then
+				followConnection:Disconnect()
+				followConnection = nil
+			end
+		end
+	end)
+
+	task.wait(2)
+	local function GetGitSound(GithubSnd, SoundName)
+		local url = GithubSnd
+		if not isfile(SoundName .. ".mp3") then
+			writefile(SoundName .. ".mp3", game:HttpGet(url))
+		end
+		local sound = Instance.new("Sound")
+		sound.SoundId = (getcustomasset or getsynasset)(SoundName .. ".mp3")
+		return sound
+	end
+	local Jumpscare = GetGitSound("https://github.com/eoyoustme/Pressure-Skid-Gay-/raw/main/virtual_vibes-electric-shock-404227.mp3","cucucucu123135134cuucuu")
+	Jumpscare.Parent = oogaBoogaaPart
+	Jumpscare.Volume = 3
+	Jumpscare.PlaybackSpeed = 0.706
+	Jumpscare:Play()
+
+	sb:Stop()
+	sb2:Stop()
+	horrorScream:Play()
+
+	local destroyed = false
+	local touchConnections = {}
+
+	local function cleanupAndDestroy()
+		if destroyed then return end
+		destroyed = true
+
+		for _, conn in ipairs(touchConnections) do
+			conn:Disconnect()
+		end
+		if followConnection then
+			followConnection:Disconnect()
+		end
+
+		if shockerModel and shockerModel.Parent then
+			shockerModel:Destroy()
+		end
+	end
+
+
+	local function applyDamage(number)
+		local character = game.Players.LocalPlayer.Character
+		if not character then return end
+
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if not humanoid or humanoid.Health <= 0 then return end
+
+		local damageAmount = (type(number) == "number") and number or 5
+
+		if humanoid.Health - damageAmount < 1 then
+			damageAmount = math.max(0, humanoid.Health - 1)
+		end
+
+		if damageAmount <= 0 then return end
+
+		local damageRemote = ReplicatedStorage:FindFirstChild("LocalDamage", true) or ReplicatedStorage:FindFirstChild("ChangeHealth", true)
+
+		if damageRemote then
+			if damageRemote.Name == "LocalDamage" then
+				damageRemote:FireServer(damageAmount, "SittingItOut", 1, nil)
+			else
+				damageRemote:FireServer("Damage", damageAmount)
+			end
+		else
+		end
+	end
+
+	for _, part in ipairs(shockerModel:GetDescendants()) do
+		if part:IsA("BasePart") then
+			part.CanTouch = true
+			local conn = part.Touched:Connect(function(hit)
+				if destroyed then return end
+				if hit:IsDescendantOf(shockerModel) then return end
+
+				if hit:IsDescendantOf(character) then
+					applyDamage(25)
+				end
+
+				cleanupAndDestroy()
+			end)
+			table.insert(touchConnections, conn)
+		end
+	end
+
+	local startPos = rootPart.Position
+	local targetDirection = (hrp.Position - startPos).Unit
+	local endPos = startPos + (targetDirection * 70)
+
+	local cframeVal = Instance.new("CFrameValue")
+	cframeVal.Value = CFrame.lookAt(startPos, endPos)
+
+	local dashInfo = TweenInfo.new(1.8, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+	local dashTween = TweenService:Create(cframeVal, dashInfo, {
+		Value = CFrame.lookAt(endPos, endPos + targetDirection)
+	})
+
+	local tweenConn
+	tweenConn = cframeVal.Changed:Connect(function(newCFrame)
+		if destroyed then
+			tweenConn:Disconnect()
+			cframeVal:Destroy()
+			return
+		end
+		shockerModel:PivotTo(newCFrame)
+	end)
+
+	dashTween:Play()
+
+	dashTween.Completed:Connect(function()
+		if tweenConn then tweenConn:Disconnect() end
+		cframeVal:Destroy()
+		task.delay(0.1, cleanupAndDestroy)
+	end)
+end
+
+spawnShocker()

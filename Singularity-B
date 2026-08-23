@@ -1,0 +1,656 @@
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local Debris = game:GetService("Debris")
+local Players = game:GetService("Players")
+
+-- 1. KHỞI TẠO PLAYER & CHARACTER
+local player = Players.LocalPlayer
+local char = player.Character or player.CharacterAdded:Wait()
+local hum = char:WaitForChild("Humanoid", 5)
+local hrp = char:WaitForChild("HumanoidRootPart", 5)
+local camera = workspace.CurrentCamera
+
+if not hrp or not hum then
+	warn("⚠️ Không tìm thấy nhân vật!")
+	return
+end
+
+local function caycaycay(duration, MaxStrength, MaxRoughness, fadeIn, fadeOut)
+	duration = duration or 1 -- Tổng thời gian rung camera (giây)
+	MaxStrength = MaxStrength or 7.5
+	MaxRoughness = MaxRoughness or 60
+
+	-- Nếu không truyền fadeIn / fadeOut, mặc định mỗi cái chiếm 15% tổng thời gian
+	fadeIn = fadeIn or (duration * 0.15)
+	fadeOut = fadeOut or (duration * 0.15)
+
+	-- Đảm bảo fadeIn + fadeOut không vượt quá tổng duration
+	if (fadeIn + fadeOut) > duration then
+		local ratio = duration / (fadeIn + fadeOut)
+		fadeIn = fadeIn * ratio
+		fadeOut = fadeOut * ratio
+	end
+
+	local showStrong = duration - fadeIn - fadeOut
+	local elapsedTime = 0
+	local tickCount = 0
+
+	local connection
+	connection = RunService.RenderStepped:Connect(function(deltaTime)
+		elapsedTime = elapsedTime + deltaTime
+
+		if elapsedTime >= duration then
+			connection:Disconnect()
+			return
+		end
+
+		local currentStrength = 0
+
+		if elapsedTime <= fadeIn then
+			local progress = elapsedTime / (fadeIn > 0 and fadeIn or 0.001)
+			local eased = TweenService:GetValue(progress, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+			currentStrength = MaxStrength * eased
+
+		elseif elapsedTime <= (fadeIn + showStrong) then
+			currentStrength = MaxStrength
+
+		else
+			local progress = (elapsedTime - fadeIn - showStrong) / (fadeOut > 0 and fadeOut or 0.001)
+			local eased = TweenService:GetValue(progress, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+			currentStrength = MaxStrength * (1 - eased)
+		end
+
+		tickCount = tickCount + deltaTime * MaxRoughness
+
+		local noiseVal = Vector3.new(
+			math.noise(tickCount, 0) * 0.5,
+			math.noise(0, tickCount) * 0.5,
+			math.noise(tickCount, tickCount) * 0.5
+		)
+
+		local shakeVector = noiseVal * currentStrength
+		local posAccumulator = shakeVector * Vector3.new(0.05, 0.05, 0.05)
+		local rotAccumulator = shakeVector * Vector3.new(1, 1, 1)
+
+		local shakeCFrame = CFrame.new(posAccumulator) * CFrame.Angles(
+			math.rad(rotAccumulator.X),
+			math.rad(rotAccumulator.Y),
+			math.rad(rotAccumulator.Z)
+		)
+
+		camera.CFrame = camera.CFrame * shakeCFrame
+	end)
+
+	return connection
+end
+
+local GameplayFolder = workspace:WaitForChild("GameplayFolder")
+local RoomsFolder = GameplayFolder:WaitForChild("Rooms")
+
+local function isPointInBox(point, boxCFrame, boxSize)
+	local localPos = boxCFrame:PointToObjectSpace(point)
+	return math.abs(localPos.X) <= boxSize.X / 2
+		and math.abs(localPos.Y) <= boxSize.Y / 2
+		and math.abs(localPos.Z) <= boxSize.Z / 2
+end
+
+local function getRoomNumberFromModel(roomModel)
+	local lights = roomModel:FindFirstChild("Lights")
+	if lights then
+		local sign = lights:FindFirstChild("Sign", true)
+		if sign then
+			local textLabel = sign:FindFirstChildWhichIsA("TextLabel", true)
+			if textLabel then
+				local num = tonumber(textLabel.Text)
+				if num then return num end
+			end
+		end
+	end
+
+	for _, desc in ipairs(roomModel:GetDescendants()) do
+		if desc:IsA("TextLabel") then
+			local num = tonumber(desc.Text)
+			if num then return num end
+		end
+	end
+
+	return nil
+end
+
+-- HÀM LẤY VÀ SẮP XẾP TẤT CẢ PHÒNG THEO SỐ PHÒNG
+local function getSortedRooms()
+	local rooms = {}
+	for _, roomModel in ipairs(RoomsFolder:GetChildren()) do
+		if roomModel:IsA("Model") then
+			local roomNum = getRoomNumberFromModel(roomModel)
+			if roomNum then
+				table.insert(rooms, {Model = roomModel, Number = roomNum})
+			end
+		end
+	end
+
+	table.sort(rooms, function(a, b)
+		return a.Number < b.Number
+	end)
+
+	return rooms
+end
+
+-- HÀM TÌM INDEX PHÒNG CỦA PLAYER
+local function getPlayerRoomIdx(sortedRooms, hrp)
+	if not hrp or #sortedRooms == 0 then return 1 end
+
+	-- 1. Kiểm tra player nằm trong BoundingBox phòng nào
+	for i, roomData in ipairs(sortedRooms) do
+		local model = roomData.Model
+		if model then
+			local cframe, size = model:GetBoundingBox()
+			if isPointInBox(hrp.Position, cframe, size) then
+				return i
+			end
+		end
+	end
+
+	-- 2. Nếu không nằm trực tiếp trong box nào, chọn phòng gần nhất
+	local closestIdx = 1
+	local closestDist = math.huge
+
+	for i, roomData in ipairs(sortedRooms) do
+		local model = roomData.Model
+		if model then
+			local cframe = model:GetBoundingBox()
+			local dist = (hrp.Position - cframe.Position).Magnitude
+			if dist < closestDist then
+				closestDist = dist
+				closestIdx = i
+			end
+		end
+	end
+
+	return closestIdx
+end
+
+-- LẤY DANH SÁCH PHÒNG VÀ XÁC ĐỊNH PHÒNG HIỆN TẠI
+local sortedRooms = getSortedRooms()
+if #sortedRooms == 0 then
+	warn("⚠️ Không tìm thấy danh sách phòng hợp lệ!")
+	return
+end
+
+local currentRoomIdx = getPlayerRoomIdx(sortedRooms, hrp)
+local currentRoomData = sortedRooms[currentRoomIdx]
+local roomModel = currentRoomData and currentRoomData.Model
+
+if not roomModel then
+	warn("⚠️ Không xác định được Model phòng hiện tại!")
+	return
+end
+
+-- TẢI MODEL ENTITY TỪ GITHUB
+local singularitysay = "https://github.com/eoyoustme/Impossible/raw/main/Singularity.rbxm"
+local httpRequest = (syn and syn.request) or http_request or request or (fluxus and fluxus.request)
+
+function getgithubmodeL(url)
+	if not (writefile and getcustomasset and httpRequest) then return nil end
+	local fileName = string.match(url, "([^/]+)$") or "temp_model.rbxm"
+	local response = httpRequest({Url = url, Method = "GET"})
+	if not response or response.StatusCode ~= 200 then return nil end
+	writefile(fileName, response.Body)
+	local assetId = getcustomasset(fileName)
+
+	local success, result = pcall(function() return game:GetObjects(assetId) end)
+	return success and result or nil
+end
+
+local success, assets = pcall(function()
+	return getgithubmodeL(singularitysay)
+end)
+
+if not success or not assets or #assets == 0 then
+	warn("⚠️ Không thể tải được Asset! Kiểm tra lại ID hoặc Executor.")
+	return
+end
+
+local s = assets[1]
+s.Name = "Singularity"
+s.Parent = workspace
+
+local entity = s:FindFirstChild("Singu") or s
+if not entity then
+	warn("⚠️ Không tìm thấy 'Singu' trong Asset!")
+	s:Destroy()
+	return
+end
+
+for _, p in ipairs(s:GetDescendants()) do
+	if p:IsA("BasePart") then
+		p.Anchored = true
+		p.CanCollide = false
+	end
+end
+local function findLockerInRoom(room)
+	local candidates = {}
+
+	for _, desc in ipairs(room:GetDescendants()) do
+		if desc:IsA("Model") then
+			local n = string.lower(desc.Name)
+			if n:find("locker") or n:find("wardrobe") or n:find("closet") then
+				table.insert(candidates, desc)
+			end
+		end
+	end
+
+	-- Nếu không có Model tên Locker, tìm trong LockersOnly hoặc Interactables
+	if #candidates == 0 then
+		for _, desc in ipairs(room:GetDescendants()) do
+			if desc:IsA("Folder") and (desc.Name == "LockersOnly" or desc.Name == "Interactables" or desc.Name == "Locations") then
+				for _, child in ipairs(desc:GetChildren()) do
+					if child:IsA("Model") or child:IsA("BasePart") then
+						table.insert(candidates, child)
+					end
+				end
+			end
+		end
+	end
+
+	for _, cand in ipairs(candidates) do
+		local targetObj = cand:FindFirstChild("Vaule") 
+			or cand:FindFirstChild("Value") 
+			or cand:FindFirstChild("Main") 
+			or cand:FindFirstChild("Root") 
+			or cand
+
+		local cf = nil
+		if targetObj:IsA("BasePart") then
+			cf = targetObj.CFrame
+		elseif targetObj:IsA("CFrameValue") then
+			cf = targetObj.Value
+		elseif targetObj:IsA("Model") then
+			local main = targetObj.PrimaryPart or targetObj:FindFirstChildWhichIsA("BasePart", true)
+			cf = main and main.CFrame or targetObj:GetPivot()
+		end
+
+		-- Đảm bảo CFrame không thuộc vùng dưới vực (-100 studs)
+		if cf and cf.Position.Y > -100 then
+			return cand, cf
+		end
+	end
+
+	return nil, nil
+end
+
+local function applyDamage(number)
+	local character = game.Players.LocalPlayer.Character
+	if not character then return end
+
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid or humanoid.Health <= 0 then return end
+
+	local damageAmount = (type(number) == "number") and number or 5
+
+	if humanoid.Health - damageAmount < 1 then
+		damageAmount = math.max(0, humanoid.Health - 1)
+	end
+
+	if damageAmount <= 0 then return end
+
+	local damageRemote = game.ReplicatedStorage:FindFirstChild("LocalDamage", true) or game.ReplicatedStorage:FindFirstChild("ChangeHealth", true)
+
+	if damageRemote then
+		if damageRemote.Name == "LocalDamage" then
+			damageRemote:FireServer(damageAmount, "SittingItOut", 1, nil)
+		else
+			damageRemote:FireServer("Damage", damageAmount)
+		end
+	else
+		humanoid:TakeDamage(damageAmount)
+	end
+end
+
+local wardrobe, spawnCFrame = findLockerInRoom(roomModel)
+
+if not wardrobe or not spawnCFrame then
+	s:Destroy()
+	return
+end
+
+local rotX, rotY, rotZ = 0, 90, 0 
+
+local finalCFrame = spawnCFrame * CFrame.Angles(math.rad(rotX), math.rad(rotY), math.rad(rotZ))
+
+if entity:IsA("Model") then
+	entity:PivotTo(finalCFrame)
+else
+	entity.CFrame = finalCFrame
+end
+
+local eyto = entity:FindFirstChild("Scare", true)
+local eyto2 = entity:FindFirstChild("caught", true)
+local eyto3 = entity:FindFirstChild("ScreamingInPublicBathroomsPrank", true)
+local eyto4 = entity:FindFirstChild("roa", true)
+local eyto5 = entity:FindFirstChild("evil scream", true)
+
+local function playSound(soundName)
+	local sound = entity:FindFirstChild(soundName, true) or s:FindFirstChild(soundName, true)
+	if sound and sound:IsA("Sound") then
+		sound:Play()
+	end
+end
+
+-- TẢI ÂM THANH TỪ GITHUB
+task.spawn(function()
+	local function GetGitSound(GithubSnd, SoundName)
+		if not isfile(SoundName .. ".mp3") then
+			writefile(SoundName .. ".mp3", game:HttpGet(GithubSnd))
+		end
+		local sound = Instance.new("Sound")
+		sound.SoundId = (getcustomasset or getsynasset)(SoundName .. ".mp3")
+		return sound
+	end
+
+	local blueSound = entity:FindFirstChild("evil scream", true)
+	if blueSound then
+		local gitSoundTemp = GetGitSound("https://github.com/eoyoustme/Impossible/blob/main/singulingi%20scream%203.mp3?raw=true", "singularityentived")
+		blueSound.SoundId = gitSoundTemp.SoundId
+	end
+
+	local blueSound5 = entity:FindFirstChild("roa", true)
+	if blueSound5 then
+		local gitSoundTemp5 = GetGitSound("https://github.com/eoyoustme/Impossible/blob/main/singularity%20activated.mp3?raw=true", "Singularitycrykid")
+		blueSound5.SoundId = gitSoundTemp5.SoundId
+	end
+end)
+
+local function createRedGlitchText(textString)
+	local playerGui = player:FindFirstChild("PlayerGui")
+	if not playerGui then return end
+
+	local sg = Instance.new("ScreenGui")
+	sg.Name = "SingularityTextEffect"
+	sg.ResetOnSpawn = false
+	sg.Parent = playerGui
+
+	local txt = Instance.new("TextLabel")
+	txt.Size = UDim2.new(1, 0, 0.25, 0)
+	txt.Position = UDim2.new(0, 0, 0.38, 0)
+	txt.BackgroundTransparency = 1
+	txt.Text = textString or ""
+	txt.TextColor3 = Color3.fromRGB(255, 255, 255)
+	txt.TextStrokeColor3 = Color3.fromRGB(80, 0, 0)
+	txt.TextStrokeTransparency = 0
+	txt.TextScaled = true
+	txt.Font = Enum.Font.SourceSansBold
+	txt.Parent = sg
+
+	task.spawn(function()
+		for i = 1, 15 do
+			txt.Position = UDim2.new(0, math.random(-8, 8), 0.38, math.random(-4, 4))
+			txt.TextTransparency = math.random(0, 2) / 10
+			task.wait(0.04)
+		end
+		txt.Position = UDim2.new(0, 0, 0.38, 0)
+		txt.TextTransparency = 0
+	end)
+
+	Debris:AddItem(sg, 2.5)
+end
+
+-- VÒNG LẶP KIỂM TRA BÁN KÍNH PLAYER (≤ 7 STUDS)
+while true do
+	if not hrp or not hrp.Parent or not entity or not entity.Parent then
+		s:Destroy()
+		return
+	end
+
+	local entityPos = entity:IsA("Model") and entity:GetPivot().Position or entity.Position
+	local distToEntity = (hrp.Position - entityPos).Magnitude
+
+	if distToEntity <= 7 then
+		break
+	end
+
+	task.wait(0.05)
+end
+
+-- XÓA PROMPT NÚP
+if wardrobe then
+	local hidePrompt = wardrobe:FindFirstChild("HidePrompt", true)
+	local hidePromptHold = wardrobe:FindFirstChild("HidePromptHold", true)
+	if hidePrompt then hidePrompt:Destroy() end
+	if hidePromptHold then hidePromptHold:Destroy() end
+end
+
+-- KÍCH HOẠT CHẾ ĐỘ TẤN CÔNG
+playSound("Scare")
+playSound("caught")
+playSound("ScreamingInPublicBathroomsPrank")
+playSound("roa")
+playSound("evil scream")
+
+local function resetSoundTime(soundName)
+	local snd = entity:FindFirstChild(soundName, true) or s:FindFirstChild(soundName, true)
+	if snd and snd:IsA("Sound") then
+		snd.TimePosition = 0
+	end
+end
+
+resetSoundTime("caught")
+resetSoundTime("Scare")
+resetSoundTime("ScreamingInPublicBathroomsPrank")
+
+local gentity = s:FindFirstChild("Main") or entity
+
+local light = Instance.new("PointLight")
+light.Color = Color3.fromRGB(155, 0, 0)
+light.Range = 0
+light.Brightness = 10
+light.Enabled = true
+light.Parent = gentity
+
+local lightTween = TweenService:Create(light, TweenInfo.new(4, Enum.EasingStyle.Linear, Enum.EasingDirection.Out), { Range = 25 })
+lightTween:Play()
+
+task.wait(1.5)
+
+if hum and hrp and entity and entity.Parent then
+	local entityPos = entity:IsA("Model") and entity:GetPivot().Position or entity.Position
+	local targetCFrame = entity:IsA("Model") and entity:GetPivot() or entity.CFrame
+
+	-- Phòng trường hợp targetCFrame bị lỗi tọa độ thấp
+	if targetCFrame.Position.Y < -100 then
+		targetCFrame = CFrame.new(entityPos.X, hrp.Position.Y, entityPos.Z)
+	end
+
+	local targets = {}
+	local processedModels = {}
+	local processedParts = {}
+
+	local playerDistance = (hrp.Position - entityPos).Magnitude
+
+	if playerDistance <= 25 then
+		createRedGlitchText("")
+	end
+
+	if playerDistance <= 35 then
+		table.insert(targets, {
+			instance = hrp,
+			distance = playerDistance,
+			isModel = false,
+			isPlayer = true
+		})
+	end
+
+	local overlapParams = OverlapParams.new()
+	overlapParams.FilterType = Enum.RaycastFilterType.Exclude
+	overlapParams.FilterDescendantsInstances = {s, char}
+
+	local nearbyParts = workspace:GetPartBoundsInRadius(entityPos, 60, overlapParams)
+
+	for _, part in ipairs(nearbyParts) do
+		local nameLower = string.lower(part.Name)
+		if nameLower:find("floor") or nameLower:find("wall") or nameLower:find("keyhitbox") or nameLower:find("door") or part.Locked then
+			continue
+		end
+
+		local parent = part.Parent
+		if parent and parent:IsA("Model") and parent ~= workspace then
+			if not processedModels[parent] then
+				processedModels[parent] = true
+				local modelPos = parent:GetPivot().Position
+				local dist = (modelPos - entityPos).Magnitude
+				table.insert(targets, {instance = parent, distance = dist, isModel = true, isPlayer = false})
+			end
+		else
+			if not processedParts[part] then
+				processedParts[part] = true
+				local dist = (part.Position - entityPos).Magnitude
+				table.insert(targets, {instance = part, distance = dist, isModel = false, isPlayer = false})
+			end
+		end
+	end
+
+	table.sort(targets, function(a, b) return a.distance < b.distance end)
+
+	local maxPull = math.min(#targets, Random.new():NextInteger(1 , 6))
+	local instancesToDestroy = {}
+
+	local chainStart1 = entity:FindFirstChild("ChainStart", true) or s:FindFirstChild("ChainStart", true)
+
+	local templateChains = {}
+	if chainStart1 and chainStart1:FindFirstChild("SingularityChain") then
+		table.insert(templateChains, {origin = chainStart1, beam = chainStart1.SingularityChain})
+	end
+
+	local createdBeams = {}
+	local createdAttachments = {}
+	local playerChained = false
+
+	for i = 1, maxPull do
+		local target = targets[i]
+		local targetPart = nil
+
+		if target.isPlayer then
+			playerChained = true
+			targetPart = target.instance
+			targetPart.Anchored = true
+		elseif target.isModel then
+			targetPart = target.instance.PrimaryPart or target.instance:FindFirstChildWhichIsA("BasePart", true)
+			table.insert(instancesToDestroy, target.instance)
+		else
+			targetPart = target.instance
+			table.insert(instancesToDestroy, target.instance)
+		end
+
+		if targetPart and #templateChains > 0 then
+			caycaycay(0.5,10,3,0.1,0.1)
+			local targetAtt = Instance.new("Attachment")
+			targetAtt.Name = "SingularityChainTargetAtt"
+			targetAtt.Parent = targetPart
+			table.insert(createdAttachments, targetAtt)
+
+			local template = templateChains[((i - 1) % #templateChains) + 1]
+			local originAtt = template.origin:IsA("Attachment") and template.origin or template.origin:FindFirstChildWhichIsA("Attachment")
+
+			if not originAtt then
+				originAtt = Instance.new("Attachment")
+				originAtt.Name = "SingularityChainOriginAtt"
+				originAtt.Parent = template.origin
+				table.insert(createdAttachments, originAtt)
+			end
+
+			local beamToUse
+			if i <= #templateChains then
+				beamToUse = template.beam
+			else
+				beamToUse = template.beam:Clone()
+				beamToUse.Parent = template.origin
+				table.insert(createdBeams, beamToUse)
+			end
+
+			beamToUse.Attachment0 = originAtt
+			beamToUse.Attachment1 = targetAtt
+			beamToUse.Transparency = NumberSequence.new(0)
+			beamToUse.Enabled = true
+
+			playSound("Chained")
+		end
+
+		task.wait(0.5)
+	end
+
+	task.wait(0.6)
+
+	local soundsToPitch = {eyto, eyto2, eyto3, eyto4, eyto5}
+	for _, snd in ipairs(soundsToPitch) do
+		if snd then
+			TweenService:Create(snd, TweenInfo.new(1, Enum.EasingStyle.Linear, Enum.EasingDirection.Out), { PlaybackSpeed = 0.029 }):Play()
+		end
+	end
+
+	local lightTween5 = TweenService:Create(light, TweenInfo.new(1, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut), { Range = 25 })
+	lightTween5:Play()
+
+	local pullTweenInfo = TweenInfo.new(1, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
+
+	for i = 1, maxPull do
+		local target = targets[i]
+		if target.isPlayer then
+			local pullCFrame = targetCFrame * CFrame.new(0, 0, -1)
+			TweenService:Create(hrp, pullTweenInfo, {CFrame = pullCFrame}):Play()
+		elseif target.isModel then
+			for _, p in ipairs(target.instance:GetDescendants()) do
+				if p:IsA("BasePart") then
+					p.Anchored = true
+					p.CanCollide = false
+					TweenService:Create(p, pullTweenInfo, {CFrame = targetCFrame}):Play()
+				end
+			end
+		else
+			target.instance.Anchored = true
+			target.instance.CanCollide = false
+			TweenService:Create(target.instance, pullTweenInfo, {CFrame = targetCFrame}):Play()
+		end
+	end
+
+	task.wait(0.6)
+
+	if playerChained and hum then
+		applyDamage(Random.new():NextInteger(40 , 50))
+	end
+
+	for _, beam in ipairs(createdBeams) do if beam then beam:Destroy() end end
+	for _, att in ipairs(createdAttachments) do if att then att:Destroy() end end
+	for _, inst in ipairs(instancesToDestroy) do if inst then inst:Destroy() end end
+
+	if playerChained and hrp then
+		hrp.Anchored = false
+	end
+
+	local cc = Instance.new("ColorCorrectionEffect", game.Lighting)
+	Debris:AddItem(cc, 8)
+	cc.Name = "Warn"
+	cc.TintColor = Color3.fromRGB(255, 20, 20)
+	cc.Saturation = -0.5
+	cc.Contrast = 0.5
+
+	TweenService:Create(cc, TweenInfo.new(5), {TintColor = Color3.fromRGB(255, 255, 255), Saturation = 0, Contrast = 0}):Play()
+	caycaycay(1,100,30,0.2,0.1)
+
+	playSound("bloood")
+	playSound("gore0")
+	playSound("gore1")
+	playSound("gore2")
+	playSound("gore3")
+
+	local blood = entity:FindFirstChild("Blood", true) or s:FindFirstChild("Blood", true)
+	if blood and blood:IsA("ParticleEmitter") then
+		blood.Enabled = true
+		task.wait(0.9)
+		blood.Enabled = false
+	end
+end
+
+task.wait(2)
+if s and s.Parent then
+	s:Destroy()
+end

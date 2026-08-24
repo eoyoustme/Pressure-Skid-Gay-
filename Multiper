@@ -121,7 +121,7 @@ local is = true
 	task.spawn(function()
 		while is do
 		wait(Random.new():NextNumber(0.25,0.5))
-			sound51.PlaybackSpeed = Random.new():NextNumber(0.5,1)
+			sound5.PlaybackSpeed = Random.new():NextNumber(0.5,1)
 			end
 	end)
 					task.wait(6)

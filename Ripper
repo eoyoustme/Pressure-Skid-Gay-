@@ -122,7 +122,7 @@ local entity = {
 	Speed = 185,
 	HeightOfOffset = 7,
 	Delay = 0,
-	Hitbox = 0,
+	Hitbox = 40,
 	PandemoniumMove = false,
 
 	PipSqueakMove = false,

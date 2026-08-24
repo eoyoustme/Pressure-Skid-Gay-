@@ -65,6 +65,7 @@
 
 						return connection
 					end
+local is = true
 
 					function light(tim,color0,color1)
 						local tweenservice = game:GetService("TweenService")
@@ -116,7 +117,15 @@
 					eq.LowGain = -20
 					eq.MidGain = -10
 					eq.Parent = sound51
+
+	task.spawn(function()
+		while is do
+		wait(Random.new():NextNumber(0.25,0.5))
+			sound51.PlaybackSpeed = Random.new():NextNumber(0.5,1)
+			end
+	end)
 					task.wait(6)
+is = false
 					sound5:Destroy()
 					sound51:Destroy()
 
@@ -125,7 +134,7 @@
 						Speed = 185,
 						HeightOfOffset = 4,
 						Delay = 0,
-						Hitbox = 0,
+						Hitbox = 40,
 						PandemoniumMove = false,
 
 						PipSqueakMove = false,
@@ -146,7 +155,7 @@
 							Duration = 1.2
 						},
 						JumpscareRipper = {
-							Enabled = true,
+							Enabled = false,
 							TargetPartName = "Ripe",
 							AttachmentName = "Attachment",
 							ParticleName = "Face1",

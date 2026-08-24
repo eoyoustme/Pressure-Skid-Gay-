@@ -82,8 +82,42 @@ task.spawn(function()
 			end
 		end
 	end
+	local is = true
+	
 	light(2, Color3.fromRGB(127, 249, 255), Color3.fromRGB(0, 45, 185))
+	task.spawn(function()
+	local sound5 = Instance.new("Sound")
+	sound5.PlaybackSpeed = 1
+	sound5.Volume = 6
+		sound5.SoundId = "rbxassetid://166047422"
+	sound5.Parent = workspace
+	sound5:Play()
 
+
+	local sound51 = Instance.new("Sound")
+	sound51.PlaybackSpeed = 1
+	sound51.Volume = 2
+		sound51.SoundId = "rbxassetid://9125632539"
+	sound51.Parent = workspace
+	sound51:Play()
+
+	task.spawn(function()
+		while is do
+			wait(Random.new():NextNumber(0.25,0.5))
+			sound5.PlaybackSpeed = Random.new():NextNumber(0.5,1)
+		end
+		end)
+		task.spawn(function()
+			while is do
+				wait(Random.new():NextNumber(0.25,0.5))
+				sound51.PlaybackSpeed = Random.new():NextNumber(0.5,1)
+			end
+		end)
+	task.wait(5)
+	is = false
+	sound5:Destroy()
+		sound51:Destroy()
+		end)
 
 	local entity = {
 		EntityModel = "https://github.com/eoyoustme/Pressure-Skid-Gay-/raw/main/MultiPng.rbxm", 
